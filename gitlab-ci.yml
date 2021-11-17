@@ -110,7 +110,7 @@ benchmark:
 
     # back to the harddisk so that rebench can read the version details
     - cd ${PROJECT_FOLDER}/graalpythonci
-    - rebench -c --experiment="CI ID $CI_PIPELINE_ID" --branch="$CI_COMMIT_REF_NAME" -c rebench.conf       m:yuria
+    - rebench -c --experiment="CI ID $CI_PIPELINE_ID" --branch="$CI_COMMIT_REF_NAME" -c rebench.conf
     - rm -Rf /tmp/graalpython
   rules:
       - changes:

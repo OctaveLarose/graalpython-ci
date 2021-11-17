@@ -1,0 +1,134 @@
+stages:
+  - build
+  - test
+  - benchmark
+  - benchmark-completion
+
+# For local testing.
+# image: ubuntu:latest
+
+.scripts:
+#   prep-local-container: &PREP_LOCAL |
+#     apt update
+#     DEBIAN_FRONTEND=noninteractive apt install -y git ssh
+
+   prep-path: &PREP_PATH |
+     export PROJECT_FOLDER=$(pwd)
+     export PATH=${PROJECT_FOLDER}/bin:${PROJECT_FOLDER}/../mx:${PATH}
+     export JAVA_HOME=${PROJECT_FOLDER}/openjdk1.8.0_302-jvmci-20.3-b23
+     export MX_PYTHON=python3
+
+   ensure-git-dependencies: &GIT_DEPS |
+     git -C ../graal fetch --all || true
+     git -C ../mx pull || true
+     git clone --depth=1 https://github.com/OctaveLarose/graalpython-ci.git graalpythonci || true
+     rm -Rf graalpythonci/.git || true
+     wget https://github.com/graalvm/graal-jvmci-8/releases/download/jvmci-20.3-b23/openjdk-8u302+07-jvmci-20.3-b23-linux-amd64.tar.gz
+     tar -xvf openjdk-8u302+07-jvmci-20.3-b23-linux-amd64.tar.gz
+
+   ensure-faststart: &GIT_FASTSTART |
+     git clone --depth=1 https://github.com/OctaveLarose/graalpython-ci.git graalpythonci  || true
+     rm -Rf graalpythonci/.git || true
+
+   package-graalpython: &PACKAGE_GP |
+     export RESULT_HOME=$(dirname $(mx graalvm-home))
+     cd ${RESULT_HOME}
+     mv $(ls) graalpython-${VARIANT}
+     rm -Rf graalpython-${VARIANT}/legal graalpython-${VARIANT}/lib/visualvm graalpython-${VARIANT}/lib/jfr graalpython-${VARIANT}/tools graalpython-${VARIANT}/include graalpython-${VARIANT}/lib/llvm
+     tar -I lz4 -cf ${PROJECT_FOLDER}/graalpython-${VARIANT}.tar.lz4 graalpython-${VARIANT}
+
+   upload-graalpython: &UPLOAD_GP |
+     sftp tmp-artifacts << EOF
+       -mkdir incoming/${CI_PIPELINE_ID}/
+       put ${PROJECT_FOLDER}/graalpython-${VARIANT}.tar.lz4 incoming/${CI_PIPELINE_ID}/
+     EOF
+
+   download-variants: &DOWNLOAD_GP |
+     sftp tmp-artifacts:incoming/${CI_PIPELINE_ID}/graalpython-jvm.tar.lz4
+     sftp tmp-artifacts:incoming/${CI_PIPELINE_ID}/graalpython-native-libgraal.tar.lz4
+
+   install-on-tmpfs: &INSTALL_ON_TMP |
+     export PROJECT_FOLDER=$(pwd)
+     rm -Rf /tmp/graalpython
+     mkdir -p /tmp/graalpython
+     cp -R graalpythonci /tmp/graalpython
+     cd /tmp/graalpython
+     ls ${PROJECT_FOLDER}
+     tar -I lz4 -xf ${PROJECT_FOLDER}/graalpython-jvm.tar.lz4
+     tar -I lz4 -xf ${PROJECT_FOLDER}/graalpython-native-libgraal.tar.lz4
+
+# Build the VMs and run tests
+# native includes jvm-ce,
+# which is available with the --jvm flag from the laucher
+build1-native-and-jvm-ce:
+  stage: build
+  tags: [yuria]
+  script:
+#    - *PREP_LOCAL
+    - *GIT_DEPS
+    - *PREP_PATH
+
+    # Copy Custom Config into TruffleRuby setup
+    - export VARIANT=native-libgraal
+#    - cp graalpythonci/${VARIANT}.env mx.graalpython/${VARIANT}
+
+#    - jt build --sforceimports --env ${VARIANT}
+
+    # ---
+
+    - mx sforceimports
+    - mx build
+
+    - *PACKAGE_GP
+    - *UPLOAD_GP
+
+build2-jvm:
+  stage: build
+  tags: [yuria2]
+  script:
+#    - *PREP_LOCAL
+    - *GIT_DEPS
+    - *PREP_PATH
+
+    - export VARIANT=jvm
+
+    - mx sforceimports
+    - mx build # Should be changed and differ from the other build
+
+    - *PACKAGE_GP
+    - *UPLOAD_GP
+
+# Run Benchmarks
+benchmark:
+  stage: benchmark
+  tags: [yuria]
+  script:
+#    - *PREP_LOCAL
+    - *DOWNLOAD_GP
+    - *GIT_FASTSTART
+    - *INSTALL_ON_TMP
+
+    # back to the harddisk so that rebench can read the version details
+    - cd ${PROJECT_FOLDER}/graalpythonci
+    - rebench -c --experiment="CI ID $CI_PIPELINE_ID" --branch="$CI_COMMIT_REF_NAME" -c rebench.conf       m:yuria
+    - rm -Rf /tmp/graalpython
+  rules:
+      - changes:
+          - mx.graalpython/suite.py
+          - src/**/*
+          - lib/**/*
+
+report-completion:
+  stage: benchmark-completion
+  tags: [yuria]
+  script:
+    - *GIT_FASTSTART
+    - *PREP_PATH
+
+    - cd graalpythonci
+    - rebench --experiment="CI ID $CI_PIPELINE_ID" -c rebench.conf
+  rules:
+      - changes:
+          - mx.graalpython/suite.py
+          - src/**/*
+          - lib/**/*

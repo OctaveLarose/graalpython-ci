@@ -5,4 +5,4 @@ stages:
 trigger-pipeline:
   stage: deploy
   script:
-    - curl -X POST -F token=${GP_MIRROR_TOKEN} -F ref=master https://git.cs.kent.ac.uk/api/v4/projects/2925/trigger/pipeline && true
+    - curl -X POST -F token=${GP_MIRROR_TOKEN} -F ref=master https://git.cs.kent.ac.uk/api/v4/projects/2924/trigger/pipeline && true
